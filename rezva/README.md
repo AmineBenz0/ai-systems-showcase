@@ -4,13 +4,13 @@ A multi-tenant SaaS that lets a business take, change and cancel bookings over *
 
 This page shows the system, the design patterns in it, and, most usefully, **the limitations I hit and how I fixed them**. Facts come from the project's own architecture docs, runbooks and chaos drill notes. Anything not yet built is labelled as such.
 
-**Contents:** [System map](#1-system-map) · [One message, end to end](#2-one-message-end-to-end) · [Limitations and fixes](#3-limitations-and-how-i-fixed-them) · [The agent](#the-agent-three-generations) · [Booking writes](#4-booking-writes-two-people-one-slot) · [Calendar sync](#5-calendar-sync-surviving-a-crash-mid-request) · [Patterns and tech](#6-patterns-and-technologies) · [Known limits](#7-known-limits-and-what-comes-next) · [Proof it recovers](#8-proof-it-recovers)
+**Contents:** [System map](#1-system-map) · [One message, end to end](#2-one-message-end-to-end) · [The agent](#3-the-agent-three-generations) · [Limitations and fixes](#4-limitations-and-how-i-fixed-them) · [Booking writes](#5-booking-writes-two-people-one-slot) · [Calendar sync](#6-calendar-sync-surviving-a-crash-mid-request) · [Patterns and tech](#7-patterns-and-technologies) · [Known limits](#8-known-limits-and-what-comes-next) · [Proof it recovers](#9-proof-it-recovers)
 
 ---
 
 ## 1. System map
 
-Today it runs as a single-VM Docker Compose stack: right-sized for the first customers, with the scaling path written down (see [section 7](#7-known-limits-and-what-comes-next)).
+Today it runs as a single-VM Docker Compose stack: right-sized for the first customers, with the scaling path written down (see [section 8](#8-known-limits-and-what-comes-next)).
 
 [![Rezva architecture at a glance: layers from clients and edge, through the backend and async core, to data stores](assets/rezva-architecture.png)](assets/rezva-architecture.png)
 
@@ -63,7 +63,17 @@ sequenceDiagram
 
 ---
 
-## 3. Limitations and how I fixed them
+## 3. The agent: three generations
+
+The agent was rebuilt twice. The full story is in my article, **[The Multi-Agent System That Wanted to Be a Monolith](https://medium.com/@amine.benzaarit0/the-multi-agent-system-that-wanted-to-be-a-monolith-bbc76c8541dc)** (Medium, June 2026). In one picture:
+
+[![The agent in three generations: a supervisor with workers, a fleet of about two dozen small agents, and one model in a bounded tool loop, with what each bought and cost](assets/rezva-agent-generations.png)](assets/rezva-agent-generations.png)
+
+The idea underneath never changed: let the model read the conversation and decide, with a wall of code around anything that cannot be undone. The tools to express it cleanly only arrived at V3.
+
+---
+
+## 4. Limitations and how I fixed them
 
 Every row is something that was actually wrong, slow or risky, with the fix that shipped (or the plan, where it has not shipped yet).
 
@@ -83,25 +93,7 @@ Every row is something that was actually wrong, slow or risky, with the fix that
 
 ---
 
-## The agent: three generations
-
-I wrote this up as a long-form article: **[The Multi-Agent System That Wanted to Be a Monolith](https://medium.com/@amine.benzaarit0/the-multi-agent-system-that-wanted-to-be-a-monolith-bbc76c8541dc)** (Medium, June 2026). The short version:
-
-| | Shape | What it bought | What it cost |
-|---|---|---|---|
-| **V1** | A supervisor model routing to deterministic Python workers | Rules enforced in code from the first commit; a fast path that skipped a redundant model call (about 33% less latency, about 40% less cost) | A 70B-class model on every turn, far too expensive for a consumer product |
-| **V2** | About two dozen small single-purpose agents: intent, one extractor per field, validators, reasoning, a renderer | Cost per turn down roughly 85 to 90% | Bugs lived in the seams between components, every change touched several of them, and templated replies (about a hundred phrases per language) made it sound like a machine |
-| **V3** | One nano-class model with native tool calling, in a bounded loop | About V2's cost, far simpler, replies in its own words | Less visible control: the model now decides what V2 decided in the open |
-
-**How it stays safe.** The model may decide anything reversible: what to say, what to look up, what to do next. The irreversible step, committing a booking, needs a single-use token minted by the earlier availability lookup. The code checks it value for value, burns it on use, and the model never sees it. The circuit breaker is kept local to each instance on purpose.
-
-**How I knew the rewrite was safe.** A suite of hundreds of hand-written conversations in six languages, with the half-sentences and mid-thought corrections of real users, had been my ground truth for the earlier architectures. I ran the new loop against every scenario before trusting it.
-
-The idea underneath never changed: let the model read the conversation and decide, with a wall of code around anything that cannot be undone. The tools to express it cleanly only arrived at V3.
-
----
-
-## 4. Booking writes: two people, one slot
+## 5. Booking writes: two people, one slot
 
 ```mermaid
 flowchart TD
@@ -124,7 +116,7 @@ Sorting every lock acquisition is what prevents deadlocks between two requests t
 
 ---
 
-## 5. Calendar sync: surviving a crash mid-request
+## 6. Calendar sync: surviving a crash mid-request
 
 Google Calendar is an external system I cannot roll back, so the worker records its intent before acting and never replays an action whose outcome is unknown.
 
@@ -142,7 +134,7 @@ stateDiagram-v2
 
 ---
 
-## 6. Patterns and technologies
+## 7. Patterns and technologies
 
 | Pattern | Where it is used | Technology |
 |---|---|---|
@@ -164,7 +156,7 @@ stateDiagram-v2
 
 ---
 
-## 7. Known limits and what comes next
+## 8. Known limits and what comes next
 
 Written down on purpose: an architecture assessment (May 2026) lists what stops scaling and when it starts to matter. Items below are **planned, not built** unless stated.
 
@@ -179,7 +171,7 @@ Written down on purpose: an architecture assessment (May 2026) lists what stops 
 
 ---
 
-## 8. Proof it recovers
+## 9. Proof it recovers
 
 Recovery primitives are only worth something if they fire under real failure. I ran chaos drills on the local stack (2026-05-27):
 
