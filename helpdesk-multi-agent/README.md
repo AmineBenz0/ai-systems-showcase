@@ -24,7 +24,7 @@ flowchart TD
 - **Confidence scores and extracted evidence** accompany each classification.
 - **Follow-ups are first-class.** When a required field is missing the system asks for it and picks the conversation back up when the user answers, using email threads to link replies to tickets.
 - **Ticket numbers** are sequential and Elasticsearch-based.
-- **RAG for priority.** Domain-specific rules are retrieved and applied when the priority is decided, instead of being hard-coded in prompts.
+- **RAG for priority.** Domain-specific rules are retrieved and applied during priority assessment.
 - **Benchmark before choosing a model.** I built a framework that compared open-source and hosted LLMs on task quality, latency, resource usage and function-calling performance. The results moved the working proof of concept from smaller local models to stronger hosted ones.
 - **Enterprise plumbing.** OAuth2 email integrations, Dockerised services, monitoring dashboards and legacy-system constraints, with error handling, tests and traceability around the LLM steps.
 
