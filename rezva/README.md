@@ -4,7 +4,7 @@ A multi-tenant SaaS that lets a business take, change and cancel bookings over *
 
 This page shows the system, the design patterns in it, and, most usefully, **the limitations I hit and how I fixed them**. Facts come from the project's own architecture docs, runbooks and chaos drill notes. Anything not yet built is labelled as such.
 
-**Contents:** [System map](#1-system-map) · [One message, end to end](#2-one-message-end-to-end) · [Limitations and fixes](#3-limitations-and-how-i-fixed-them) · [Booking writes](#4-booking-writes-two-people-one-slot) · [Calendar sync](#5-calendar-sync-surviving-a-crash-mid-request) · [Patterns and tech](#6-patterns-and-technologies) · [Known limits](#7-known-limits-and-what-comes-next) · [Proof it recovers](#8-proof-it-recovers)
+**Contents:** [System map](#1-system-map) · [One message, end to end](#2-one-message-end-to-end) · [Limitations and fixes](#3-limitations-and-how-i-fixed-them) · [The agent](#the-agent-three-generations) · [Booking writes](#4-booking-writes-two-people-one-slot) · [Calendar sync](#5-calendar-sync-surviving-a-crash-mid-request) · [Patterns and tech](#6-patterns-and-technologies) · [Known limits](#7-known-limits-and-what-comes-next) · [Proof it recovers](#8-proof-it-recovers)
 
 ---
 
@@ -29,7 +29,7 @@ sequenceDiagram
     participant W as Webhook (FastAPI)
     participant R as Redis Streams
     participant K as AI turn worker
-    participant M as Agent service (LangGraph)
+    participant M as Agent service
     participant D as PostgreSQL
     participant S as Sender worker
 
@@ -80,6 +80,24 @@ Every row is something that was actually wrong, slow or risky, with the fix that
 | Cache lock deadlock (incident F8) | Requests hung for hours after a crashed task kept a lock | Lock acquire timeout with direct-fetch fallback, timeout counter, runbook with the two failure shapes (spike vs stuck) |
 | Liveness vs readiness | Health check passed while the database was unreachable | Chaos drill exposed it; the fix is to probe the readiness endpoint (filed as a one-line change) |
 | Cross-tenant risk | One bug could expose another business's rows | Row-level security, `SET LOCAL app.tenant_id` per transaction, property test |
+
+---
+
+## The agent: three generations
+
+I wrote this up as a long-form article: **[The Multi-Agent System That Wanted to Be a Monolith](https://medium.com/@amine.benzaarit0/the-multi-agent-system-that-wanted-to-be-a-monolith-bbc76c8541dc)** (Medium, June 2026). The short version:
+
+| | Shape | What it bought | What it cost |
+|---|---|---|---|
+| **V1** | A supervisor model routing to deterministic Python workers | Rules enforced in code from the first commit; a fast path that skipped a redundant model call (about 33% less latency, about 40% less cost) | A 70B-class model on every turn, far too expensive for a consumer product |
+| **V2** | About two dozen small single-purpose agents: intent, one extractor per field, validators, reasoning, a renderer | Cost per turn down roughly 85 to 90% | Bugs lived in the seams between components, every change touched several of them, and templated replies (about a hundred phrases per language) made it sound like a machine |
+| **V3** | One nano-class model with native tool calling, in a bounded loop | About V2's cost, far simpler, replies in its own words | Less visible control: the model now decides what V2 decided in the open |
+
+**How it stays safe.** The model may decide anything reversible: what to say, what to look up, what to do next. The irreversible step, committing a booking, needs a single-use token minted by the earlier availability lookup. The code checks it value for value, burns it on use, and the model never sees it. The circuit breaker is kept local to each instance on purpose.
+
+**How I knew the rewrite was safe.** A suite of hundreds of hand-written conversations in six languages, with the half-sentences and mid-thought corrections of real users, had been my ground truth for the earlier architectures. I ran the new loop against every scenario before trusting it.
+
+The idea underneath never changed: let the model read the conversation and decide, with a wall of code around anything that cannot be undone. The tools to express it cleanly only arrived at V3.
 
 ---
 
@@ -138,11 +156,11 @@ stateDiagram-v2
 | Distributed lock | One agent turn per conversation | Redis `SET NX EX` |
 | Advisory locking in a fixed order | Booking writes | PostgreSQL |
 | Row-level security multi-tenancy | Every tenant table | PostgreSQL 15, property test |
-| Bounded agent loop with deterministic tools | Booking agent | LangGraph service, rules in code |
+| Bounded agent loop with deterministic tools | Booking agent | One model in a tool loop, rules in code |
 | Canonical error envelope, shared wire formats | API and agent service | Pydantic v2, `shared` package |
 | Config invalidation fan-out | Tenant config changes | Redis Pub/Sub |
 
-**Stack:** Python · FastAPI · async SQLAlchemy + asyncpg · Pydantic v2 · Alembic · LangGraph · PostgreSQL 15 · Redis 7 · Next.js (5 apps) · Caddy · Docker Compose · GitHub Actions (20+ workflows, including E2E, load, migration-cycle check, pip-audit, gitleaks, Semgrep, Trivy) · Prometheus · AlertManager · Grafana · OpenTelemetry + Tempo · Sentry · Backblaze B2 · Resend.
+**Stack:** Python · FastAPI · async SQLAlchemy + asyncpg · Pydantic v2 · Alembic · PostgreSQL 15 · Redis 7 · Next.js (5 apps) · Caddy · Docker Compose · GitHub Actions (20+ workflows, including E2E, load, migration-cycle check, pip-audit, gitleaks, Semgrep, Trivy) · Prometheus · AlertManager · Grafana · OpenTelemetry + Tempo · Sentry · Backblaze B2 · Resend.
 
 ---
 
