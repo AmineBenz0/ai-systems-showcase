@@ -4,29 +4,34 @@ Before I moved to agentic AI I built classic ML systems. They are why I care abo
 
 | Project | When | Headline result |
 |---|---|---|
-| [Automated prediction pipeline](#1-automated-prediction-pipeline-freelance) | 2024-25, freelance | 86.3% accuracy, 0.954 AUC with time-based validation |
+| [CS:GO match predictor](#1-csgo-match-outcome-predictor-freelance) | 2024-25, freelance | 86.3% accuracy, 0.954 AUC on a chronological test split |
 | [Incident resolution-time model](#2-incident-resolution-time-model-dxc) | Summer 2024, DXC | Random Forest, MSE 1.69, R² 0.54 |
 | [Network anomaly detection with Splunk](#3-network-anomaly-detection-htbs) | Summer 2023, HTBS | Strong anomaly surfaced in a controlled brute-force test |
 
 ---
 
-## 1. Automated prediction pipeline (freelance)
+## 1. CS:GO match outcome predictor (freelance)
 
-Client work in gaming, sports analytics and sales forecasting. The main project was a pipeline that refreshes its data daily and produces new predictions from whatever data has arrived.
+A model that predicts the winner of professional Counter-Strike matches from player and team history. The data is refreshed daily and predictions are regenerated as new matches arrive. I also wrote it up as a short paper.
 
 ```mermaid
 flowchart LR
-    A["New data arrives daily"] --> B["Ingest and clean"]
-    B --> C["Feature engineering"]
-    C --> D["Train / evaluate<br/>XGBoost + Random Forest ensemble"]
-    D --> E["Time-based validation<br/>train on the past, test on the future"]
-    E --> F["Recurring predictions<br/>from newly available data"]
-    F -.->|monitor, iterate with the client| C
+    P["Player stats per match"] --> F1["Rolling form and consistency<br/>last 5 matches"]
+    F1 --> T["Team aggregates"]
+    R["Match results"] --> W["Recent win rate,<br/>head-to-head, map ratings"]
+    T --> X["Rating differential<br/>team 1 vs team 2"]
+    W --> X
+    X --> M["Soft-voting ensemble<br/>XGBoost + Random Forest"]
+    M --> O["Win probability for each team"]
 ```
 
-- **Result:** 86.3% accuracy and 0.954 AUC.
-- **Why time-based validation:** random splits can let information from the future leak into training and inflate the score. Splitting by time reduces that leakage risk and mirrors how the model is used.
-- **Beyond the model:** turning loosely defined client needs into a technical problem, iterating on results, and maintaining the system after the first training run.
+- **Features:** rolling 5-match rating and its spread per player, aggregated to the team; map-specific ratings; recent win rate; head-to-head record, down-weighted so a small sample cannot dominate; and the rating gap between the two teams.
+- **Model:** XGBoost and Random Forest averaged by soft voting, with XGBoost tuned by grid search.
+- **Result:** 86.3% accuracy and 0.954 AUC on a chronological test split. The most influential features were team average ratings, the rating gap, rankings, recent win rates and map-specific ratings.
+- **Probabilities, not only winners:** in the example matches the output ranges from about 50/50 to roughly 98% for clear favourites.
+- **Evaluation:** matches are split by date, so the model trains on earlier matches and is tested on later ones.
+- **Limits I wrote down:** roster changes, team morale and tournament stakes, game-version shifts and missing tournament context are not modelled.
+- **Beyond the model:** turning a loosely defined client need into a technical problem, iterating on results, and maintaining the system after the first training run.
 
 ## 2. Incident resolution-time model (DXC)
 
