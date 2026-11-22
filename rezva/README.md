@@ -20,7 +20,17 @@ Today it runs as a single-VM Docker Compose stack: right-sized for the first cus
 
 ## 2. One message, end to end
 
-The webhook does the minimum and returns. All the slow, failure-prone work happens behind a queue.
+The webhook does the minimum and returns. Everything slow or failure-prone happens behind a queue. The numbers match the poster above.
+
+1. **Arrives.** WhatsApp calls the webhook.
+2. **Verify, dedupe, enqueue.** HMAC-SHA256 signature check, tenant resolved from the phone number id, duplicate message ids dropped, message stored for the audit trail, added to the Redis stream, then `200 OK` straight away (target under 100 ms).
+3. **Claimed.** An AI turn worker reads it through a consumer group.
+4. **One locked turn.** A per-conversation Redis lock (`SET NX EX`) means one turn at a time; the agent call sits behind a circuit breaker and a timeout.
+5. **Reply into outbox.** Written in the same transaction, then the stream entry is acknowledged. If the agent fails, the message is re-queued with backoff, and after the last retry it lands in the dead-letter queue, which raises an alert.
+6. **Sent.** The sender worker claims outbox rows with `SKIP LOCKED` and replies through the WhatsApp API.
+
+<details>
+<summary><b>Full sequence diagram</b></summary>
 
 ```mermaid
 sequenceDiagram
@@ -61,6 +71,8 @@ sequenceDiagram
     S->>C: send reply via WhatsApp API
 ```
 
+</details>
+
 ---
 
 ## 3. The agent: three generations
@@ -79,6 +91,9 @@ Every row is something that was actually wrong, slow or risky, with the fix that
 
 [![Problems hit in Rezva and the fix for each, grouped by reliability, concurrency, performance, operations and security](assets/rezva-problems-and-fixes.png)](assets/rezva-problems-and-fixes.png)
 
+<details>
+<summary><b>The same list as text</b></summary>
+
 | Limitation | Why it hurt | Fix |
 |---|---|---|
 | Agent called through a fire-and-forget HTTP background task | No retries, no queue depth to watch, AI could not scale apart from the web process | Redis Streams ingress queue, consumer groups, backoff retries, DLQ, queue-depth and lag metrics |
@@ -90,6 +105,8 @@ Every row is something that was actually wrong, slow or risky, with the fix that
 | Cache lock deadlock (incident F8) | Requests hung for hours after a crashed task kept a lock | Lock acquire timeout with direct-fetch fallback, timeout counter, runbook with the two failure shapes (spike vs stuck) |
 | Liveness vs readiness | Health check passed while the database was unreachable | Chaos drill exposed it; the fix is to probe the readiness endpoint (filed as a one-line change) |
 | Cross-tenant risk | One bug could expose another business's rows | Row-level security, `SET LOCAL app.tenant_id` per transaction, property test |
+
+</details>
 
 ---
 
