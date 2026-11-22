@@ -12,70 +12,9 @@ This page shows the system, the design patterns in it, and, most usefully, **the
 
 Today it runs as a single-VM Docker Compose stack: right-sized for the first customers, with the scaling path written down (see [section 7](#7-known-limits-and-what-comes-next)).
 
-```mermaid
-flowchart TB
-    WA["WhatsApp customer"]
-    WEBU["Business owner, onboarding,<br/>platform operator"]
+[![Rezva architecture at a glance: layers from clients and edge, through the backend and async core, to data stores](assets/rezva-architecture.png)](assets/rezva-architecture.png)
 
-    subgraph EDGE["Edge"]
-        CADDY["Caddy 2.8<br/>auto TLS, security headers,<br/>per-IP rate limits"]
-    end
-
-    subgraph WEB["Web apps - Next.js x5"]
-        APPS["admin, client, onboarding,<br/>superadmin, landing page<br/>per-request CSP nonce"]
-    end
-
-    subgraph BE["Backend - FastAPI monolith"]
-        API["REST API + WhatsApp webhook<br/>async SQLAlchemy, Pydantic v2<br/>canonical ErrorEnvelope<br/>shared package for wire formats"]
-    end
-
-    subgraph DATA["Data stores"]
-        PG[("PostgreSQL 15<br/>row-level security<br/>outbox tables")]
-        REDIS[("Redis 7<br/>Streams, L2 cache, idempotency keys,<br/>rate limits, locks, Pub/Sub")]
-    end
-
-    subgraph WK["Background workers - Python"]
-        AIW["ai_turn_worker"]
-        SEND["whatsapp_sender"]
-        CSYNC["calendar_sync +<br/>reconciliation"]
-    end
-
-    subgraph AI["Agent service - FastAPI + LangGraph"]
-        AGENT["Booking agent<br/>bounded tool-calling loop<br/>own database for turn logs"]
-    end
-
-    subgraph EXT["External services"]
-        WAAPI["WhatsApp Business API"]
-        LLM["LLM provider"]
-        GC["Google Calendar"]
-        EM["Resend email"]
-    end
-
-    subgraph OBS["Observability and safety nets"]
-        direction LR
-        O1["Prometheus + AlertManager<br/>to Slack, 7 Grafana dashboards"]
-        O2["OpenTelemetry to Tempo,<br/>Sentry, JSON logs with PII redaction"]
-        O3["Daily pg_dump to Backblaze B2<br/>with staleness alert"]
-    end
-
-    WA -->|webhook| CADDY
-    WEBU --> APPS --> CADDY
-    CADDY --> API
-    API -->|reads, writes, RLS| PG
-    API -->|XADD message| REDIS
-    REDIS -->|XREADGROUP| AIW
-    AIW -->|HTTP with circuit breaker| AGENT
-    AGENT -->|tools call internal API| API
-    AGENT --> LLM
-    PG -->|outbox rows, SKIP LOCKED| SEND
-    SEND -->|send reply| WAAPI
-    WAAPI -.->|delivers to| WA
-    PG -->|outbox rows| CSYNC
-    CSYNC <--> GC
-    API --> EM
-    BE -.-> OBS
-    WK -.-> OBS
-```
+*Click the image for full size. Numbers 1 to 6 follow one customer message through the system.*
 
 ---
 
@@ -128,53 +67,7 @@ sequenceDiagram
 
 Every row is something that was actually wrong, slow or risky, with the fix that shipped (or the plan, where it has not shipped yet).
 
-```mermaid
-flowchart LR
-    subgraph REL["Reliability"]
-        P1["Fire-and-forget HTTP to the agent:<br/>no retries, no queue visibility,<br/>no independent scaling"]:::problem
-        F1["Redis Streams + consumer groups,<br/>retry with exponential backoff,<br/>dead-letter queue, depth and lag metrics"]:::fix
-        P2["A failed turn could be lost or<br/>retried with stale stream state"]:::problem
-        F2["NACK = ACK + re-add with retry_count,<br/>pending-entry retention,<br/>automatic recovery if the consumer group vanishes"]:::fix
-        P3["Slow or dead dependency drags<br/>the whole request path down"]:::problem
-        F3["Circuit breakers on all 6 outbound<br/>dependencies, one shared Prometheus metric"]:::fix
-        P1 --> F1
-        P2 --> F2
-        P3 --> F3
-    end
-
-    subgraph CON["Concurrency and correctness"]
-        P4["Two customers, one slot"]:::problem
-        F4["Sorted advisory locks, then row locks,<br/>re-check, bounded retry,<br/>DB exclusion constraint as last line"]:::fix
-        P5["Same booking submitted twice<br/>by retries"]:::problem
-        F5["Idempotency at 3 layers: HTTP middleware,<br/>repository UPSERT, database constraint"]:::fix
-        P6["Worker crashes while calling Google Calendar:<br/>was the event created?"]:::problem
-        F6["Fenced claims with token + 5-minute lease,<br/>commit intent before the call,<br/>ambiguous crash goes to recovery_required"]:::fix
-        P4 --> F4
-        P5 --> F5
-        P6 --> F6
-    end
-
-    subgraph PERF["Performance"]
-        P7["Availability lookup hits several tables<br/>on every conversation turn"]:::problem
-        F7["L1 in-memory 5 s + L2 Redis 30 s cache,<br/>single-flight, explicit invalidation on every write"]:::fix
-        P8["A stuck cache lock hung requests<br/>for hours (incident, 2026-05-26)"]:::problem
-        F8["Bounded lock wait (5 s), fall back to<br/>a direct fetch, metric on every timeout"]:::fix
-        P7 --> F7
-        P8 --> F8
-    end
-
-    subgraph OPS["Operations and safety"]
-        P9["Docker health check stayed green while<br/>Postgres was down"]:::problem
-        F9["Found in a chaos drill; switch orchestration<br/>to the readiness endpoint that checks dependencies"]:::fix
-        P10["Cross-tenant data leak from an<br/>application bug"]:::problem
-        F10["Row-level security with a per-transaction tenant id,<br/>covered by a property-based test"]:::fix
-        P9 --> F9
-        P10 --> F10
-    end
-
-    classDef problem fill:#fde8e8,stroke:#c0392b,color:#5a1a14
-    classDef fix fill:#e6f6ea,stroke:#1e8449,color:#12391f
-```
+[![Problems hit in Rezva and the fix for each, grouped by reliability, concurrency, performance, operations and security](assets/rezva-problems-and-fixes.png)](assets/rezva-problems-and-fixes.png)
 
 | Limitation | Why it hurt | Fix |
 |---|---|---|
