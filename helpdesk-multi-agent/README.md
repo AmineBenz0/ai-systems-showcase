@@ -1,6 +1,10 @@
 # Helpdesk multi-agent system: architecture
 
-Built during my AI engineering internship. It turns an incoming support mailbox into structured, routed tickets. The code is public: [HelpDesk_Multi_Agent_System](https://github.com/AmineBenz0/HelpDesk_Multi_Agent_System).
+**The problem:** support teams spend hours every day sorting 50 to 200 incident emails by hand.
+
+**The system:** an open-source, multi-agent pipeline that classifies each email, detects its priority, creates the ticket and shows everything on a real-time dashboard, so the team can spend its time on the work that needs a person. Built with RAG, LangGraph and a flexible multi-agent design, aimed at organisations without large budgets.
+
+Built during my AI engineering internship. The code is public: [HelpDesk_Multi_Agent_System](https://github.com/AmineBenz0/HelpDesk_Multi_Agent_System).
 
 ## Flow
 
